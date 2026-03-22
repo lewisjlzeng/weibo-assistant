@@ -92,10 +92,24 @@ install_playwright() {
     fi
 
     if ! check_command pip3; then
-        fail "未找到 pip3。请先安装 Python3: sudo apt-get install python3-pip"
+        info "  pip3 未找到，先安装 python3-pip..."
+        sudo apt-get install -y -qq python3-pip python3-full || \
+            fail "无法安装 pip3。请手动运行: sudo apt-get install python3-pip"
     fi
 
-    pip3 install playwright --quiet
+    # Ubuntu 24.04+ 默认启用 PEP 668（externally-managed-environment），
+    # 禁止 pip 直接安装全局包。在服务器部署场景下，使用 --break-system-packages 绕过。
+    pip3 install playwright --quiet 2>/dev/null || {
+        warn "pip3 受 PEP 668 限制，使用 --break-system-packages 安装..."
+        pip3 install playwright --quiet --break-system-packages
+    }
+
+    # 确认 playwright 命令可用（可能安装到 ~/.local/bin，需要刷新 PATH）
+    export PATH="${HOME}/.local/bin:${PATH}"
+    if ! check_command playwright; then
+        fail "Playwright 安装后未找到 playwright 命令。请检查 ~/.local/bin 是否在 PATH 中。"
+    fi
+
     ok "Playwright 安装完成（版本: $(playwright --version 2>/dev/null)）"
 }
 
