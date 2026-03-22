@@ -279,18 +279,64 @@ PYEOF
 # Step 6: 注册 Headless Chromium 服务并启动浏览器
 # ---------------------------------------------------------------------------
 
-setup_browser_service() {
-    info "Step 6/6: 设置 Headless Chromium 服务并启动浏览器..."
+# Chromium 启动参数（统一定义，systemd 和直接启动共用）
+CHROMIUM_ARGS=(
+    --headless=new
+    --no-sandbox
+    --remote-debugging-port=${CDP_PORT}
+    --remote-debugging-address=127.0.0.1
+    --disable-gpu
+    --no-first-run
+    --no-default-browser-check
+    --disable-extensions
+    --disable-background-networking
+    --disable-sync
+    --disable-translate
+    --mute-audio
+    --hide-scrollbars
+    about:blank
+)
 
-    # --- 6a: 停止可能冲突的旧进程 ---
-    # 杀掉可能残留的 Chromium CDP 进程
-    if pgrep -f "remote-debugging-port=${CDP_PORT}" >/dev/null 2>&1; then
-        info "  停止残留的 Chromium CDP 进程（端口 ${CDP_PORT}）..."
-        pkill -f "remote-debugging-port=${CDP_PORT}" 2>/dev/null || true
-        sleep 1
-    fi
+# 判断是否可以使用 systemd --user（需要 D-Bus user session）
+can_use_systemd_user() {
+    systemctl --user status >/dev/null 2>&1
+}
 
-    # --- 6b: 创建 systemd user service ---
+# 判断是否可以使用系统级 systemd
+can_use_systemd_system() {
+    systemctl status >/dev/null 2>&1
+}
+
+# 写入系统级 systemd 服务（/etc/systemd/system/）
+install_system_service() {
+    local svc_file="/etc/systemd/system/${SERVICE_NAME}.service"
+
+    cat > "${svc_file}" << EOF
+[Unit]
+Description=OpenClaw Headless Chromium (CDP port ${CDP_PORT})
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${CHROMIUM_BIN} $(printf '%s ' "${CHROMIUM_ARGS[@]}")
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    info "  已写入系统级 systemd 服务: ${svc_file}"
+    systemctl daemon-reload
+    systemctl enable "${SERVICE_NAME}.service" 2>/dev/null
+    systemctl restart "${SERVICE_NAME}.service"
+    info "  Chromium Headless 服务已启动（系统级 systemd）"
+
+    ACTIVE_SERVICE_TYPE="system"
+}
+
+# 写入 systemd user 服务（~/.config/systemd/user/）
+install_user_service() {
     mkdir -p "${SYSTEMD_USER_DIR}"
     cat > "${SERVICE_FILE}" << EOF
 [Unit]
@@ -299,21 +345,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${CHROMIUM_BIN} \\
-    --headless=new \\
-    --no-sandbox \\
-    --remote-debugging-port=${CDP_PORT} \\
-    --remote-debugging-address=127.0.0.1 \\
-    --disable-gpu \\
-    --no-first-run \\
-    --no-default-browser-check \\
-    --disable-extensions \\
-    --disable-background-networking \\
-    --disable-sync \\
-    --disable-translate \\
-    --mute-audio \\
-    --hide-scrollbars \\
-    about:blank
+ExecStart=${CHROMIUM_BIN} $(printf '%s ' "${CHROMIUM_ARGS[@]}")
 Restart=on-failure
 RestartSec=5
 
@@ -321,15 +353,68 @@ RestartSec=5
 WantedBy=default.target
 EOF
 
-    info "  已写入 systemd 服务: ${SERVICE_FILE}"
-
-    # --- 6c: 启动服务 ---
+    info "  已写入 systemd user 服务: ${SERVICE_FILE}"
     systemctl --user daemon-reload
     systemctl --user enable "${SERVICE_NAME}.service" 2>/dev/null
     systemctl --user restart "${SERVICE_NAME}.service"
-    info "  Chromium Headless 服务已启动"
+    info "  Chromium Headless 服务已启动（systemd user）"
 
-    # --- 6d: 等待 CDP 端口就绪 ---
+    ACTIVE_SERVICE_TYPE="user"
+}
+
+# 最终回退：直接后台启动 Chromium
+start_chromium_direct() {
+    info "  以后台进程方式直接启动 Chromium..."
+    nohup "${CHROMIUM_BIN}" "${CHROMIUM_ARGS[@]}" \
+        > /tmp/openclaw-chromium-headless.log 2>&1 &
+    local pid=$!
+    echo "${pid}" > /tmp/openclaw-chromium-headless.pid
+    info "  Chromium 已在后台启动（PID: ${pid}，日志: /tmp/openclaw-chromium-headless.log）"
+
+    ACTIVE_SERVICE_TYPE="direct"
+}
+
+setup_browser_service() {
+    info "Step 6/6: 设置 Headless Chromium 服务并启动浏览器..."
+
+    ACTIVE_SERVICE_TYPE=""
+
+    # --- 6a: 停止可能冲突的旧进程/服务 ---
+    # 先停旧的 systemd 服务（系统级和用户级都尝试）
+    systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
+    systemctl --user stop "${SERVICE_NAME}.service" 2>/dev/null || true
+
+    # 杀掉可能残留的 Chromium CDP 进程
+    if pgrep -f "remote-debugging-port=${CDP_PORT}" >/dev/null 2>&1; then
+        info "  停止残留的 Chromium CDP 进程（端口 ${CDP_PORT}）..."
+        pkill -f "remote-debugging-port=${CDP_PORT}" 2>/dev/null || true
+        sleep 1
+    fi
+
+    # --- 6b: 启动 Chromium Headless 服务 ---
+    # 优先级：系统级 systemd > 用户级 systemd > 直接后台进程
+    if [[ "$(id -u)" == "0" ]]; then
+        # root 用户：systemd --user 通常不可用（缺少 D-Bus session），使用系统级
+        if can_use_systemd_system; then
+            install_system_service
+        else
+            warn "systemd 不可用，回退到直接后台进程模式"
+            start_chromium_direct
+        fi
+    else
+        # 非 root 用户
+        if can_use_systemd_user; then
+            install_user_service
+        elif can_use_systemd_system && sudo -n true 2>/dev/null; then
+            warn "systemd --user 不可用（缺少 D-Bus session），尝试系统级服务..."
+            install_system_service
+        else
+            warn "systemd 不可用，回退到直接后台进程模式"
+            start_chromium_direct
+        fi
+    fi
+
+    # --- 6c: 等待 CDP 端口就绪 ---
     info "  等待 CDP 端口 ${CDP_PORT} 就绪..."
     local retries=0
     local max_retries=15
@@ -343,7 +428,12 @@ EOF
 
     if [ $retries -ge $max_retries ]; then
         warn "CDP 端口 ${CDP_PORT} 在 ${max_retries} 秒内未就绪"
-        warn "请手动检查: systemctl --user status ${SERVICE_NAME}.service"
+        if [[ "${ACTIVE_SERVICE_TYPE}" == "system" ]]; then
+            warn "请检查: systemctl status ${SERVICE_NAME}.service"
+            warn "查看日志: journalctl -u ${SERVICE_NAME} --no-pager -n 20"
+        elif [[ "${ACTIVE_SERVICE_TYPE}" == "direct" ]]; then
+            warn "请检查: cat /tmp/openclaw-chromium-headless.log"
+        fi
         return 1
     fi
 
@@ -351,12 +441,12 @@ EOF
     chrome_version=$(curl -sf "http://127.0.0.1:${CDP_PORT}/json/version" | python3 -c "import sys,json; print(json.load(sys.stdin).get('Browser','unknown'))" 2>/dev/null || echo "unknown")
     ok "Chromium Headless 已就绪（${chrome_version}，CDP 端口 ${CDP_PORT}）"
 
-    # --- 6e: 重启 OpenClaw gateway 使配置生效 ---
+    # --- 6d: 重启 OpenClaw gateway 使配置生效 ---
     info "  重启 OpenClaw gateway..."
     openclaw gateway restart 2>/dev/null || warn "gateway 重启失败，请手动运行: openclaw gateway restart"
     sleep 3
 
-    # --- 6f: 启动 OpenClaw browser ---
+    # --- 6e: 启动 OpenClaw browser ---
     info "  启动 OpenClaw browser..."
     if openclaw browser start 2>/dev/null; then
         ok "OpenClaw browser 已启动"
@@ -389,9 +479,31 @@ print_summary() {
     echo "  Cookie 目录:   ${COOKIE_DIR}/"
     echo "  OpenClaw 配置: ${OPENCLAW_CONFIG}"
     echo ""
-    echo "  浏览器服务:    ${SERVICE_NAME}.service"
-    echo "    查看状态:    systemctl --user status ${SERVICE_NAME}"
-    echo "    查看日志:    journalctl --user -u ${SERVICE_NAME} -f"
+
+    case "${ACTIVE_SERVICE_TYPE}" in
+        system)
+            echo "  浏览器服务:    ${SERVICE_NAME}.service（系统级 systemd）"
+            echo "    查看状态:    systemctl status ${SERVICE_NAME}"
+            echo "    查看日志:    journalctl -u ${SERVICE_NAME} -f"
+            echo "    重启服务:    systemctl restart ${SERVICE_NAME}"
+            ;;
+        user)
+            echo "  浏览器服务:    ${SERVICE_NAME}.service（systemd user）"
+            echo "    查看状态:    systemctl --user status ${SERVICE_NAME}"
+            echo "    查看日志:    journalctl --user -u ${SERVICE_NAME} -f"
+            echo "    重启服务:    systemctl --user restart ${SERVICE_NAME}"
+            ;;
+        direct)
+            echo "  浏览器服务:    后台进程模式"
+            echo "    查看日志:    cat /tmp/openclaw-chromium-headless.log"
+            echo "    查看 PID:    cat /tmp/openclaw-chromium-headless.pid"
+            echo "    手动重启:    kill \$(cat /tmp/openclaw-chromium-headless.pid); bash setup.sh"
+            ;;
+        *)
+            echo "  浏览器服务:    未知状态"
+            ;;
+    esac
+
     echo ""
     echo "  下一步："
     echo "    在企业微信中对 OpenClaw 说「登录微博」即可开始！"

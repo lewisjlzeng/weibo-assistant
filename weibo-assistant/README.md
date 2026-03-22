@@ -65,8 +65,9 @@ openclaw skills list | grep weibo
 # 检查浏览器状态
 openclaw browser status
 
-# 检查 Chromium CDP 服务
-systemctl --user status openclaw-chromium-headless
+# 检查 Chromium CDP 服务（root 用户使用系统级服务）
+systemctl status openclaw-chromium-headless    # root 用户
+systemctl --user status openclaw-chromium-headless  # 非 root 用户
 ```
 
 ## 目录结构
@@ -124,6 +125,9 @@ openclaw cron add --name weibo-evening --schedule "0 20 * * *" \
 
 ```bash
 # 查看 Chromium CDP 服务日志
+# root 用户（系统级 systemd）：
+journalctl -u openclaw-chromium-headless -f
+# 非 root 用户（systemd user）：
 journalctl --user -u openclaw-chromium-headless -f
 
 # 查看 OpenClaw gateway 日志
@@ -133,7 +137,11 @@ tail -f /tmp/openclaw/openclaw-$(date +%Y-%m-%d).log
 curl -s http://127.0.0.1:18800/json/version
 
 # 重启所有服务
+# root 用户：
+systemctl restart openclaw-chromium-headless
+# 非 root 用户：
 systemctl --user restart openclaw-chromium-headless
+
 openclaw gateway restart
 ```
 

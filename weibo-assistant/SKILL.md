@@ -18,7 +18,7 @@ metadata: { "openclaw": { "os": ["linux"], "emoji": "📱", "requires": { "bins"
 bash {baseDir}/scripts/setup.sh
 ```
 
-**一条命令搞定全部**，脚本会自动完成：安装系统依赖 → 安装 Playwright → 下载 Chromium（国内镜像加速） → 创建数据目录 → 配置 OpenClaw（browser.enabled/headless/noSandbox、tools.profile=full） → 注册 systemd 服务并启动浏览器。全程无需人工干预。
+**一条命令搞定全部**，脚本会自动完成：安装系统依赖 → 安装 Playwright → 下载 Chromium（国内镜像加速） → 创建数据目录 → 配置 OpenClaw（browser.enabled/headless/noSandbox、tools.profile=full） → 自动选择最佳方式启动 Chromium CDP 服务（root 用户使用系统级 systemd，非 root 使用 user 级，无 systemd 则直接后台运行）并启动浏览器。全程无需人工干预。
 
 ## 0) 前置条件
 
