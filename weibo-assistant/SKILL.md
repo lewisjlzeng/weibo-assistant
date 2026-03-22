@@ -12,49 +12,13 @@ metadata: { "openclaw": { "os": ["linux"], "emoji": "📱", "requires": { "bins"
 
 ## 首次部署
 
-如果是全新部署的 OpenClaw 机器，需要先运行安装脚本完成环境准备：
+如果是全新部署的 OpenClaw 机器，只需运行一键安装脚本：
 
 ```bash
 bash {baseDir}/scripts/setup.sh
 ```
 
-该脚本会自动完成以下工作（**使用国内镜像加速，无需科学上网**）：
-
-1. 安装 Chromium 运行所需的系统依赖（libnss3、libgbm 等）
-2. 安装 Python 版 Playwright（提供 `playwright install` CLI）
-3. 从 npmmirror 国内镜像下载 Chromium 和 Headless Shell
-4. 创建 `/usr/bin/chromium` 软链接
-5. 创建 Cookie 数据目录
-
-安装完成后，还需手动配置 OpenClaw：
-
-```bash
-# 启用浏览器（headless 无头模式，适用于无桌面的服务器）
-openclaw config set browser.enabled true
-openclaw config set browser.headless true
-openclaw config set browser.noSandbox true
-
-# 设置默认 profile 为 openclaw（非 Chrome 扩展模式）
-openclaw config set browser.defaultProfile openclaw
-
-# 注意：profile 的 color 和 cdpPort 必须同时存在才能通过验证，
-# 无法通过 openclaw config set 逐个设置，需直接编辑配置文件：
-python3 -c "
-import json, pathlib
-p = pathlib.Path.home() / '.openclaw/openclaw.json'
-cfg = json.loads(p.read_text())
-cfg.setdefault('browser', {}).setdefault('profiles', {})['openclaw'] = {'color': '#4A90D9', 'cdpPort': 18800}
-p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
-print('browser profile openclaw 已写入')
-"
-
-# 切换到 full 工具集（coding 模式不包含 browser 工具）
-openclaw config set tools.profile full
-
-# 重启生效
-openclaw gateway restart
-openclaw browser start
-```
+**一条命令搞定全部**，脚本会自动完成：安装系统依赖 → 安装 Playwright → 下载 Chromium（国内镜像加速） → 创建数据目录 → 配置 OpenClaw（browser.enabled/headless/noSandbox、tools.profile=full） → 注册 systemd 服务并启动浏览器。全程无需人工干预。
 
 ## 0) 前置条件
 
