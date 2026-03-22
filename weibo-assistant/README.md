@@ -54,8 +54,17 @@ openclaw config set browser.noSandbox true
 
 # 设置默认 profile 为 openclaw（非 Chrome 扩展模式，适用于无桌面的服务器）
 openclaw config set browser.defaultProfile openclaw
-openclaw config set browser.profiles.openclaw.color "#4A90D9"
-openclaw config set browser.profiles.openclaw.cdpPort 18800
+
+# 注意：profile 的 color 和 cdpPort 必须同时存在才能通过验证，
+# 无法通过 openclaw config set 逐个设置，需直接编辑配置文件：
+python3 -c "
+import json, pathlib
+p = pathlib.Path.home() / '.openclaw/openclaw.json'
+cfg = json.loads(p.read_text())
+cfg.setdefault('browser', {}).setdefault('profiles', {})['openclaw'] = {'color': '#4A90D9', 'cdpPort': 18800}
+p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+print('browser profile openclaw 已写入')
+"
 
 # 切换到 full 工具集（coding 模式不包含 browser 工具）
 openclaw config set tools.profile full
